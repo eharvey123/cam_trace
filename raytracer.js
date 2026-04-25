@@ -9,17 +9,25 @@ struct Uniforms {
     tunnelOffset: f32,
     numObstacles: f32,
     playerLightReach: f32,
-    padding2: f32,
+    time: f32,
     obstacleCenters: array<vec4<f32>, 10>,
     obstacleSizes: array<vec4<f32>, 10>,
     obstacleColors: array<vec4<f32>, 10>,
     obstacleEmissions: array<vec4<f32>, 10>,
+    
+    numParticles: f32,
+    padding3: f32,
+    padding4: f32,
+    padding5: f32,
+    
+    particlePositions: array<vec4<f32>, 50>,
+    particleColors: array<vec4<f32>, 50>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var prevAccumulation: texture_2d<f32>;
 @group(0) @binding(2) var nextAccumulation: texture_storage_2d<rgba32float, write>;
-@group(0) @binding(3) var renderTarget: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(3) var renderTarget: texture_storage_2d<rgba16float, write>;
 
 const MAX_BOUNCES: i32 = 4;
 const SAMPLES_PER_PIXEL: i32 = 1;
@@ -117,8 +125,65 @@ fn intersect_box(ray: Ray, boxMin: vec3<f32>, boxMax: vec3<f32>, outNormal: ptr<
     return -1.0;
 }
 
-fn get_scene_intersection(ray: Ray) -> Hit {
+fn get_curve_offset(z: f32) -> vec2<f32> {
+    let localZ = z + uniforms.tunnelOffset;
+    let curveX = sin(localZ * 0.2) * 2.0;
+    let curveY = cos(localZ * 0.15) * 1.0;
+    return vec2<f32>(curveX, curveY);
+}
+
+fn sdTunnel(p: vec3<f32>) -> f32 {
+    let curve = get_curve_offset(p.z);
+    let q = vec2<f32>(p.x - curve.x, p.y - 1.0 - curve.y); // center tunnel at y=1.0
+    let d = abs(q) - vec2<f32>(2.0, 2.0);
+    return -(min(max(d.x, d.y), 0.0) + length(max(d, vec2<f32>(0.0))));
+}
+
+fn raymarch_tunnel(ray: Ray) -> Hit {
+    var t = 0.01;
+    var hitDist = 10000.0;
+    var p = vec3<f32>(0.0);
+    
+    for(var i=0; i<150; i++) {
+        p = ray.origin + ray.direction * t;
+        let d = sdTunnel(p);
+        if d < 0.001 {
+            hitDist = t;
+            break;
+        }
+        t += d * 0.8; // Domain distortion safety factor
+        if t > 100.0 { break; }
+    }
+    
     var hit = Hit(10000.0, vec3<f32>(0.0), Material(vec3<f32>(0.0), vec3<f32>(0.0), 1.0, 0.0));
+    if hitDist < 100.0 {
+        let eps = 0.01;
+        let nx = sdTunnel(p + vec3<f32>(eps, 0.0, 0.0)) - sdTunnel(p - vec3<f32>(eps, 0.0, 0.0));
+        let ny = sdTunnel(p + vec3<f32>(0.0, eps, 0.0)) - sdTunnel(p - vec3<f32>(0.0, eps, 0.0));
+        let nz = sdTunnel(p + vec3<f32>(0.0, 0.0, eps)) - sdTunnel(p - vec3<f32>(0.0, 0.0, eps));
+        let hitNormal = normalize(vec3<f32>(nx, ny, nz));
+        
+        let curve = get_curve_offset(p.z);
+        let uq = vec2<f32>(p.x - curve.x, p.y - 1.0 - curve.y);
+        
+        var col = vec3<f32>(0.0);
+        if abs(hitNormal.y) > 0.5 {
+            let grid = max(abs(fract(uq.x) - 0.5), abs(fract(p.z + uniforms.tunnelOffset) - 0.5));
+            col = mix(vec3<f32>(0.1, 0.1, 0.15), vec3<f32>(0.2, 0.6, 1.0), step(0.48, grid));
+        } else {
+            let grid = max(abs(fract(uq.y) - 0.5), abs(fract(p.z + uniforms.tunnelOffset) - 0.5));
+            col = mix(vec3<f32>(0.15, 0.1, 0.1), vec3<f32>(1.0, 0.2, 0.2), step(0.48, grid));
+        }
+        
+        hit = Hit(hitDist, hitNormal, Material(col, vec3<f32>(0.0), 0.5, 0.0));
+    }
+    return hit;
+}
+
+
+
+fn get_scene_intersection(ray: Ray) -> Hit {
+    var hit = raymarch_tunnel(ray);
     
     // Default materials
     let matWhite = Material(vec3<f32>(0.8, 0.8, 0.8), vec3<f32>(0.0), 1.0, 0.0);
@@ -129,41 +194,7 @@ fn get_scene_intersection(ray: Ray) -> Hit {
     // Dynamic light based on eyes
     let matLight = Material(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(5.0, 5.0, 5.0), 1.0, 0.0);
 
-    // Floor
-    let tFloor = intersect_plane(ray, vec3<f32>(0.0, 1.0, 0.0), 1.0);
-    if tFloor > 0.0 && tFloor < hit.dist { 
-        let hp = ray.origin + ray.direction * tFloor;
-        let grid = max(abs(fract(hp.x) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
-        let col = mix(vec3<f32>(0.1, 0.1, 0.15), vec3<f32>(0.2, 0.6, 1.0), step(0.48, grid));
-        hit = Hit(tFloor, vec3<f32>(0.0, 1.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
-    }
-    
-    // Ceiling
-    let tCeil = intersect_plane(ray, vec3<f32>(0.0, -1.0, 0.0), 3.0);
-    if tCeil > 0.0 && tCeil < hit.dist { 
-        let hp = ray.origin + ray.direction * tCeil;
-        let grid = max(abs(fract(hp.x) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
-        let col = mix(vec3<f32>(0.1, 0.1, 0.15), vec3<f32>(0.2, 0.6, 1.0), step(0.48, grid));
-        hit = Hit(tCeil, vec3<f32>(0.0, -1.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
-    }
-    
-    // Left wall
-    let tLeft = intersect_plane(ray, vec3<f32>(1.0, 0.0, 0.0), 2.0);
-    if tLeft > 0.0 && tLeft < hit.dist { 
-        let hp = ray.origin + ray.direction * tLeft;
-        let grid = max(abs(fract(hp.y) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
-        let col = mix(vec3<f32>(0.15, 0.1, 0.1), vec3<f32>(1.0, 0.2, 0.2), step(0.48, grid));
-        hit = Hit(tLeft, vec3<f32>(1.0, 0.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
-    }
-    
-    // Right wall
-    let tRight = intersect_plane(ray, vec3<f32>(-1.0, 0.0, 0.0), 2.0);
-    if tRight > 0.0 && tRight < hit.dist { 
-        let hp = ray.origin + ray.direction * tRight;
-        let grid = max(abs(fract(hp.y) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
-        let col = mix(vec3<f32>(0.1, 0.15, 0.1), vec3<f32>(0.2, 1.0, 0.2), step(0.48, grid));
-        hit = Hit(tRight, vec3<f32>(-1.0, 0.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
-    }
+
     
     // Obstacles
     let numObs = min(10, i32(uniforms.numObstacles));
@@ -196,6 +227,23 @@ fn get_scene_intersection(ray: Ray) -> Hit {
         }
     }
     
+    // Particles
+    let numParticles = min(50, i32(uniforms.numParticles));
+    for (var i = 0; i < numParticles; i++) {
+        let pPos = uniforms.particlePositions[i].xyz;
+        let pRad = uniforms.particlePositions[i].w;
+        let pCol = uniforms.particleColors[i].xyz;
+        let pInt = uniforms.particleColors[i].w;
+        
+        let tSphere = intersect_sphere(ray, pPos, pRad);
+        if tSphere > 0.0 && tSphere < hit.dist {
+            let hp = ray.origin + ray.direction * tSphere;
+            let normal = normalize(hp - pPos);
+            let pMat = Material(pCol, pCol * pInt, 1.0, 0.0);
+            hit = Hit(tSphere, normal, pMat);
+        }
+    }
+    
     // Dynamic Eye Light Sphere
     let tLight = intersect_sphere(ray, uniforms.lightPos, 0.15);
     if tLight > 0.0 && tLight < hit.dist {
@@ -223,7 +271,7 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
     let lightTarget = uniforms.lightPos + jitter;
     let lightDir = normalize(lightTarget - hitPoint);
     
-    let shadowRay = Ray(hitPoint + hit.normal * 1e-4, lightDir);
+    let shadowRay = Ray(hitPoint + hit.normal * 0.01, lightDir);
     let shadowHit = get_scene_intersection(shadowRay);
     
     // Attenuation factor to control how far light reaches before diminishing
@@ -240,7 +288,7 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
         
         // Prevent tracing below the surface
         if dot(finalReflectDir, hit.normal) > 0.0 {
-            let reflectRay = Ray(hitPoint + hit.normal * 1e-4, finalReflectDir);
+            let reflectRay = Ray(hitPoint + hit.normal * 0.01, finalReflectDir);
             let reflectHit = get_scene_intersection(reflectRay);
             
             if reflectHit.dist < 9999.0 {

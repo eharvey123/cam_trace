@@ -99,6 +99,10 @@ export class Renderer {
     setPlayerLightReach(reach) {
         this.playerLightReach = reach;
     }
+    
+    setParticles(particles) {
+        this.particles = particles;
+    }
 
     setupTextures() {
         if (this.accumulationTextures[0]) {
@@ -119,7 +123,7 @@ export class Renderer {
         
         this.renderTargetTexture = this.device.createTexture({
             size,
-            format: 'rgba8unorm',
+            format: 'rgba16float',
             usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
         });
     }
@@ -163,7 +167,42 @@ export class Renderer {
                 
                 @fragment
                 fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-                    return textureSample(myTexture, mySampler, uv);
+                    var color = textureSample(myTexture, mySampler, uv).rgb;
+                    
+                    // Multi-tap Bloom (Pseudo-Gaussian)
+                    var bloom = vec3<f32>(0.0);
+                    let radius = vec2<f32>(1.0 / 800.0) * 15.0; // Bloom spread
+                    let taps = 12.0;
+                    
+                    for(var i=0; i<12; i++) {
+                        let angle = f32(i) * 3.14159 * 2.0 / taps;
+                        let offset = vec2<f32>(cos(angle), sin(angle)) * radius;
+                        let sampleCol = textureSample(myTexture, mySampler, uv + offset).rgb;
+                        // Extract bright spots
+                        let brightness = dot(sampleCol, vec3<f32>(0.2126, 0.7152, 0.0722));
+                        if (brightness > 1.2) {
+                            bloom += sampleCol * 0.15;
+                        }
+                    }
+                    
+                    // Add second outer ring for softer glare
+                    for(var i=0; i<12; i++) {
+                        let angle = f32(i) * 3.14159 * 2.0 / taps;
+                        let offset = vec2<f32>(cos(angle), sin(angle)) * radius * 2.0;
+                        let sampleCol = textureSample(myTexture, mySampler, uv + offset).rgb;
+                        let brightness = dot(sampleCol, vec3<f32>(0.2126, 0.7152, 0.0722));
+                        if (brightness > 1.2) {
+                            bloom += sampleCol * 0.08;
+                        }
+                    }
+                    
+                    color += bloom;
+                    
+                    // Filmic Tonemapping
+                    color = color / (color + vec3<f32>(1.0));
+                    color = pow(color, vec3<f32>(1.0 / 2.2));
+                    
+                    return vec4<f32>(color, 1.0);
                 }
             `
         });
@@ -190,13 +229,13 @@ export class Renderer {
         // 8-10: cameraPos, 11: padding
         // 12-14: cameraDir, 15: renderMode
         // 16: tunnelOffset, 17: numObstacles, 18-19: padding
-        // 20-59: obstacleCenters (10x vec4)
-        // 60-99: obstacleSizes (10x vec4)
-        // 100-139: obstacleColors (10x vec4)
         // 140-179: obstacleEmissions (10x vec4)
-        this.uniformData = new Float32Array(180);
+        // 180: numParticles, 181-183: padding
+        // 184-383: particlePositions (50x vec4)
+        // 384-583: particleColors (50x vec4)
+        this.uniformData = new Float32Array(600);
         this.uniformBuffer = this.device.createBuffer({
-            size: 720, // 180 * 4 bytes
+            size: 2400, // 600 * 4 bytes
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -257,10 +296,11 @@ export class Renderer {
         this.uniformData[14] = 1.0;
         this.uniformData[15] = 1.0;
         
-        // 16 = tunnelOffset, 17 = numObstacles, 18 = playerLightReach
+        // 16 = tunnelOffset, 17 = numObstacles, 18 = playerLightReach, 19 = time
         this.uniformData[16] = this.tunnelOffset;
         this.uniformData[17] = this.gameObstacles ? this.gameObstacles.length : 0;
         this.uniformData[18] = this.playerLightReach;
+        this.uniformData[19] = performance.now() / 1000.0;
         
         if (this.gameObstacles) {
             for (let i = 0; i < 10; i++) {
@@ -290,6 +330,28 @@ export class Renderer {
                     this.uniformData[60 + i*4 + 0] = 0;
                     this.uniformData[100 + i*4 + 0] = 0;
                     this.uniformData[140 + i*4 + 0] = 0;
+                }
+            }
+        }
+        
+        // Particles
+        this.uniformData[180] = this.particles ? this.particles.length : 0;
+        if (this.particles) {
+            for (let i = 0; i < 50; i++) {
+                if (i < this.particles.length) {
+                    const p = this.particles[i];
+                    this.uniformData[184 + i*4 + 0] = p.x;
+                    this.uniformData[184 + i*4 + 1] = p.y;
+                    this.uniformData[184 + i*4 + 2] = p.z;
+                    this.uniformData[184 + i*4 + 3] = p.radius;
+                    
+                    this.uniformData[384 + i*4 + 0] = p.r;
+                    this.uniformData[384 + i*4 + 1] = p.g;
+                    this.uniformData[384 + i*4 + 2] = p.b;
+                    this.uniformData[384 + i*4 + 3] = p.intensity;
+                } else {
+                    this.uniformData[184 + i*4 + 0] = 0;
+                    this.uniformData[384 + i*4 + 0] = 0;
                 }
             }
         }

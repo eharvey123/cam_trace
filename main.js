@@ -67,7 +67,8 @@ async function main() {
         lastTime: performance.now(),
         obstacles: [],
         spawnTimer: 0,
-        iFrames: 0
+        iFrames: 0,
+        particles: []
     };
 
     const scoreValue = document.getElementById('score-value');
@@ -116,14 +117,15 @@ async function main() {
 
         // 20% chance to be highly emissive
         const isEmissive = Math.random() > 0.8;
-        // Increase intensity based on score for more dramatic lighting further down the tunnel
         const intensity = 5.0 + (gameState.score / 500.0) * 10.0;
         const emission = isEmissive ? [color[0] * intensity, color[1] * intensity, color[2] * intensity] : [0.0, 0.0, 0.0];
 
         gameState.obstacles.push({
-            x: x,
-            y: (Math.random() - 0.5) * 1.5,
+            x: x, // relative to tunnel center
+            y: (Math.random() - 0.5) * 1.5, // relative to tunnel center
             z: 10.0,
+            renderX: 0,
+            renderY: 0,
             w: 0.15 + Math.random() * 0.15, // size or radius
             h: 0.15 + Math.random() * 0.15,
             d: 0.1,
@@ -140,6 +142,31 @@ async function main() {
             startX: x,
             timeOffset: Math.random() * Math.PI * 2
         });
+    }
+    function getCurveOffset(z, tunnelOffset) {
+        const localZ = z + tunnelOffset;
+        const curveX = Math.sin(localZ * 0.2) * 2.0;
+        const curveY = Math.cos(localZ * 0.15) * 1.0;
+        return { x: curveX, y: curveY };
+    }
+    
+    function spawnExplosion(obs) {
+        for (let i = 0; i < 20; i++) {
+            gameState.particles.push({
+                x: obs.renderX + (Math.random() - 0.5) * obs.w,
+                y: obs.renderY + (Math.random() - 0.5) * obs.h,
+                z: obs.z,
+                vx: (Math.random() - 0.5) * 4.0,
+                vy: (Math.random() - 0.5) * 4.0 + 2.0,
+                vz: (Math.random() - 0.5) * 4.0,
+                radius: 0.02 + Math.random() * 0.03,
+                r: obs.er > 0 ? obs.r : 1.0,
+                g: obs.eg > 0 ? obs.g : 0.5,
+                b: obs.eb > 0 ? obs.b : 0.2,
+                intensity: obs.er > 0 ? 10.0 : 5.0,
+                life: 1.0 + Math.random()
+            });
+        }
     }
 
     function updateGame() {
@@ -168,13 +195,40 @@ async function main() {
             let obs = gameState.obstacles[i];
             obs.z -= gameState.speed * dt;
 
+            const curve = getCurveOffset(obs.z, gameState.tunnelOffset);
+            obs.renderX = obs.x + curve.x;
+            obs.renderY = obs.y + curve.y;
+
             if (obs.dynamic) {
-                obs.x = obs.startX + Math.sin(now / 500.0 + obs.timeOffset) * 0.5;
+                obs.renderX += Math.sin(now / 500.0 + obs.timeOffset) * 0.5;
             }
 
             if (obs.z < -2.0) {
                 gameState.obstacles.splice(i, 1);
             }
+        }
+        
+        // Update particles
+        for (let i = gameState.particles.length - 1; i >= 0; i--) {
+            let p = gameState.particles[i];
+            p.life -= dt;
+            if (p.life <= 0) {
+                gameState.particles.splice(i, 1);
+                continue;
+            }
+            p.vy -= 9.8 * dt; // gravity
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.z += p.vz * dt;
+            
+            // Bounce off curving tunnel walls approximately
+            const curve = getCurveOffset(p.z, gameState.tunnelOffset);
+            const dx = p.x - curve.x;
+            const dy = p.y - 1.0 - curve.y;
+            
+            if (Math.abs(dx) > 1.9) { p.vx *= -0.7; p.x = p.x > curve.x ? curve.x + 1.9 : curve.x - 1.9; }
+            if (dy < -1.9) { p.vy *= -0.7; p.y = curve.y + 1.0 - 1.9; }
+            if (dy > 1.9) { p.vy *= -0.7; p.y = curve.y + 1.0 + 1.9; }
         }
 
         if (gameState.iFrames > 0) {
@@ -187,22 +241,25 @@ async function main() {
 
                 if (obs.shapeId === 1) {
                     // Sphere collision
-                    const dx = lp.x - obs.x;
-                    const dy = lp.y - obs.y;
+                    const dx = lp.x - obs.renderX;
+                    const dy = lp.y - obs.renderY;
                     const dz = lp.z - obs.z;
                     const distSq = dx * dx + dy * dy + dz * dz;
                     const totalRad = obs.w + lightRad;
                     if (distSq < totalRad * totalRad) hit = true;
                 } else {
                     // Box collision
-                    const dx = Math.max(obs.x - obs.w, Math.min(lp.x, obs.x + obs.w)) - lp.x;
-                    const dy = Math.max(obs.y - obs.h, Math.min(lp.y, obs.y + obs.h)) - lp.y;
+                    const dx = Math.max(obs.renderX - obs.w, Math.min(lp.x, obs.renderX + obs.w)) - lp.x;
+                    const dy = Math.max(obs.renderY - obs.h, Math.min(lp.y, obs.renderY + obs.h)) - lp.y;
                     const dz = Math.max(obs.z - obs.d, Math.min(lp.z, obs.z + obs.d)) - lp.z;
                     const distSq = dx * dx + dy * dy + dz * dz;
                     if (distSq < lightRad * lightRad) hit = true;
                 }
 
                 if (hit) {
+                    spawnExplosion(obs);
+                    gameState.obstacles.splice(gameState.obstacles.indexOf(obs), 1);
+                    
                     gameState.health -= 25;
                     gameState.iFrames = 1.0;
 
@@ -222,7 +279,14 @@ async function main() {
             }
         }
 
-        renderer.setObstacles(gameState.obstacles);
+        // Pass to renderer using renderX and renderY
+        const renderObstacles = gameState.obstacles.map(obs => ({
+            ...obs,
+            x: obs.renderX,
+            y: obs.renderY
+        }));
+        renderer.setObstacles(renderObstacles);
+        renderer.setParticles(gameState.particles);
         renderer.setTunnelOffset(gameState.tunnelOffset);
         
         // Player light reach falls off as score increases
