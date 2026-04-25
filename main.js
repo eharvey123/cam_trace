@@ -23,15 +23,12 @@ async function main() {
 
     // Initialize Tracker
     statusText.innerText = "Loading MediaPipe Model...";
+    let rawLightPos = {x: 0, y: 1, z: -2};
     const tracker = new Tracker(
         document.getElementById('webcam'),
         document.getElementById('debug-canvas'),
         (lightPos) => {
-            renderer.setLightPos(lightPos);
-            // Update UI
-            metricX.innerText = lightPos.x.toFixed(2);
-            metricY.innerText = lightPos.y.toFixed(2);
-            metricZ.innerText = lightPos.z.toFixed(2);
+            rawLightPos = lightPos;
         }
     );
 
@@ -145,9 +142,14 @@ async function main() {
     }
     function getCurveOffset(z, tunnelOffset) {
         const localZ = z + tunnelOffset;
-        const curveX = Math.sin(localZ * 0.2) * 2.0;
-        const curveY = Math.cos(localZ * 0.15) * 1.0;
-        return { x: curveX, y: curveY };
+        let curveX = Math.sin(localZ * 0.2) * 2.0 + Math.sin(localZ * 0.5 + 1.5) * 0.5 + Math.sin(localZ * 0.11 + 0.3) * 1.5;
+        let curveY = Math.cos(localZ * 0.15) * 1.0 + Math.cos(localZ * 0.37 + 0.8) * 0.5 + Math.sin(localZ * 0.08 + 2.1) * 1.0;
+        
+        const camZ = -3.0 + tunnelOffset;
+        let camX = Math.sin(camZ * 0.2) * 2.0 + Math.sin(camZ * 0.5 + 1.5) * 0.5 + Math.sin(camZ * 0.11 + 0.3) * 1.5;
+        let camY = Math.cos(camZ * 0.15) * 1.0 + Math.cos(camZ * 0.37 + 0.8) * 0.5 + Math.sin(camZ * 0.08 + 2.1) * 1.0;
+        
+        return { x: curveX - camX, y: curveY - camY };
     }
     
     function spawnExplosion(obs) {
@@ -288,6 +290,50 @@ async function main() {
         renderer.setObstacles(renderObstacles);
         renderer.setParticles(gameState.particles);
         renderer.setTunnelOffset(gameState.tunnelOffset);
+        
+        // --- Calculate Camera Direction ---
+        const lookAheadCurve = getCurveOffset(2.0, gameState.tunnelOffset); 
+        let dirX = lookAheadCurve.x;
+        let dirY = lookAheadCurve.y;
+        let dirZ = 5.0; // 2.0 - (-3.0)
+        let len = Math.sqrt(dirX*dirX + dirY*dirY + dirZ*dirZ);
+        let forward = { x: dirX/len, y: dirY/len, z: dirZ/len };
+        if (renderer.setCameraDir) {
+            renderer.setCameraDir(forward);
+        }
+
+        // --- Calculate rotated lightPos ---
+        let worldUp = { x: 0, y: 1, z: 0 };
+        let right = {
+            x: worldUp.y * forward.z - worldUp.z * forward.y,
+            y: worldUp.z * forward.x - worldUp.x * forward.z,
+            z: worldUp.x * forward.y - worldUp.y * forward.x
+        };
+        let rLen = Math.sqrt(right.x*right.x + right.y*right.y + right.z*right.z);
+        right = { x: right.x/rLen, y: right.y/rLen, z: right.z/rLen };
+        
+        let up = {
+            x: forward.y * right.z - forward.z * right.y,
+            y: forward.z * right.x - forward.x * right.z,
+            z: forward.x * right.y - forward.y * right.x
+        };
+        
+        // rawLightPos is relative to center (0, 1, -2)
+        let headX = rawLightPos.x;
+        let headY = rawLightPos.y - 1.0;
+        let headZ = rawLightPos.z - (-2.0);
+        
+        let lp = {
+            x: 0.0 + forward.x * (1.0 + headZ) + right.x * headX + up.x * headY,
+            y: 1.0 + forward.y * (1.0 + headZ) + right.y * headX + up.y * headY,
+            z: -3.0 + forward.z * (1.0 + headZ) + right.z * headX + up.z * headY
+        };
+        renderer.setLightPos(lp);
+        
+        // Update UI
+        metricX.innerText = lp.x.toFixed(2);
+        metricY.innerText = lp.y.toFixed(2);
+        metricZ.innerText = lp.z.toFixed(2);
         
         // Player light reach falls off as score increases
         const reach = Math.max(0.5, 10.0 - (gameState.score / 2000.0) * 9.5);

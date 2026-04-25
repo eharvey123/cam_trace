@@ -28,6 +28,7 @@ export class Renderer {
         this.usePathTracing = true;
         this.gameObstacles = [];
         this.tunnelOffset = 0.0;
+        this.cameraDir = { x: 0.0, y: 0.0, z: 1.0 };
         this.playerLightReach = 10.0;
     }
 
@@ -96,6 +97,10 @@ export class Renderer {
         this.tunnelOffset = offset;
     }
     
+    setCameraDir(dir) {
+        this.cameraDir = dir;
+    }
+
     setPlayerLightReach(reach) {
         this.playerLightReach = reach;
     }
@@ -291,9 +296,9 @@ export class Renderer {
         this.uniformData[10] = -3.0;
         
         // 12,13,14 = cameraDir, 15 = renderMode (0.0=PathTracing, 1.0=RayTracing)
-        this.uniformData[12] = 0.0;
-        this.uniformData[13] = 0.0;
-        this.uniformData[14] = 1.0;
+        this.uniformData[12] = this.cameraDir.x;
+        this.uniformData[13] = this.cameraDir.y;
+        this.uniformData[14] = this.cameraDir.z;
         this.uniformData[15] = 1.0;
         
         // 16 = tunnelOffset, 17 = numObstacles, 18 = playerLightReach, 19 = time

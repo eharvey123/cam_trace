@@ -127,9 +127,14 @@ fn intersect_box(ray: Ray, boxMin: vec3<f32>, boxMax: vec3<f32>, outNormal: ptr<
 
 fn get_curve_offset(z: f32) -> vec2<f32> {
     let localZ = z + uniforms.tunnelOffset;
-    let curveX = sin(localZ * 0.2) * 2.0;
-    let curveY = cos(localZ * 0.15) * 1.0;
-    return vec2<f32>(curveX, curveY);
+    let curveX = sin(localZ * 0.2) * 2.0 + sin(localZ * 0.5 + 1.5) * 0.5 + sin(localZ * 0.11 + 0.3) * 1.5;
+    let curveY = cos(localZ * 0.15) * 1.0 + cos(localZ * 0.37 + 0.8) * 0.5 + sin(localZ * 0.08 + 2.1) * 1.0;
+    
+    let camZ = -3.0 + uniforms.tunnelOffset;
+    let camX = sin(camZ * 0.2) * 2.0 + sin(camZ * 0.5 + 1.5) * 0.5 + sin(camZ * 0.11 + 0.3) * 1.5;
+    let camY = cos(camZ * 0.15) * 1.0 + cos(camZ * 0.37 + 0.8) * 0.5 + sin(camZ * 0.08 + 2.1) * 1.0;
+    
+    return vec2<f32>(curveX - camX, curveY - camY);
 }
 
 fn sdTunnel(p: vec3<f32>) -> f32 {
@@ -411,10 +416,11 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
     let fov = 1.0;
     
     let forward = normalize(uniforms.cameraDir);
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    let right = normalize(cross(up, forward));
+    let worldUp = vec3<f32>(0.0, 1.0, 0.0);
+    let right = normalize(cross(worldUp, forward));
+    let trueUp = cross(forward, right);
     
-    let dir = normalize(forward + ndc.x * aspect * fov * right - ndc.y * fov * up); 
+    let dir = normalize(forward + ndc.x * aspect * fov * right - ndc.y * fov * trueUp); 
     
     let ray = Ray(uniforms.cameraPos, dir);
     
