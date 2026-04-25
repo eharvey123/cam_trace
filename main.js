@@ -168,7 +168,7 @@ async function main() {
         scoreValue.innerText = Math.floor(gameState.score).toString();
 
         gameState.speed += dt * 0.05;
-        gameState.tunnelOffset -= gameState.speed * dt;
+        gameState.tunnelOffset += gameState.speed * dt;
 
         gameState.spawnTimer -= dt;
         const spawnRate = Math.max(0.3, 1.0 - (gameState.score / 2000.0));

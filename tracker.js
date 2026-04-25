@@ -97,8 +97,8 @@ export class Tracker {
                     const deltaDist = eyeDist - this.baseline.eyeDist;
                     
                     // Map to 3D space from center base
-                    // X follows head movement (camera is mirrored)
-                    let targetX = this.baseCenter.x + deltaX * 5.0; 
+                    // Camera is mirrored, so moving physical head right moves face left in the raw image
+                    let targetX = this.baseCenter.x - deltaX * 5.0; 
                     let targetY = this.baseCenter.y - deltaY * 5.0; 
                     
                     // Closer to camera -> larger eyeDist (positive delta) -> closer light (larger Z)
