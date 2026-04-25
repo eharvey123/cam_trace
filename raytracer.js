@@ -190,26 +190,65 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
     
     let hitPoint = ray.origin + ray.direction * hit.dist;
     
-    // Cast shadow ray
-    let lightDir = normalize(uniforms.lightPos - hitPoint);
+    // Stochastic Soft Shadow Ray
+    let lightRadius = 0.15;
+    let baseLightDir = normalize(uniforms.lightPos - hitPoint);
+    let jitter = random_hemisphere_cosine(baseLightDir) * lightRadius;
+    let lightTarget = uniforms.lightPos + jitter;
+    let lightDir = normalize(lightTarget - hitPoint);
+    
     let shadowRay = Ray(hitPoint + hit.normal * 1e-4, lightDir);
     let shadowHit = get_scene_intersection(shadowRay);
     
     var color = vec3<f32>(0.0);
-    // If shadow ray hits the light, we're not in shadow
-    if dot(shadowHit.mat.emission, shadowHit.mat.emission) > 0.0 {
-        let nDotL = max(0.0, dot(hit.normal, lightDir));
+    
+    if hit.mat.metallic > 0.5 {
+        // Reflection ray
+        let reflectDir = reflect(ray.direction, hit.normal);
+        let fuzz = random_hemisphere_cosine(hit.normal) * hit.mat.roughness;
+        let finalReflectDir = normalize(reflectDir + fuzz);
         
-        if hit.mat.metallic > 0.5 {
-            // Simple specular
+        // Prevent tracing below the surface
+        if dot(finalReflectDir, hit.normal) > 0.0 {
+            let reflectRay = Ray(hitPoint + hit.normal * 1e-4, finalReflectDir);
+            let reflectHit = get_scene_intersection(reflectRay);
+            
+            if reflectHit.dist < 9999.0 {
+                if dot(reflectHit.mat.emission, reflectHit.mat.emission) > 0.0 {
+                    color += reflectHit.mat.emission * hit.mat.color;
+                } else {
+                    // One bounce of diffuse lighting for the reflection
+                    let rHitPoint = reflectRay.origin + reflectRay.direction * reflectHit.dist;
+                    let rLightTarget = uniforms.lightPos + random_hemisphere_cosine(normalize(uniforms.lightPos - rHitPoint)) * lightRadius;
+                    let rLightDir = normalize(rLightTarget - rHitPoint);
+                    
+                    let rShadowRay = Ray(rHitPoint + reflectHit.normal * 1e-4, rLightDir);
+                    let rShadowHit = get_scene_intersection(rShadowRay);
+                    
+                    if dot(rShadowHit.mat.emission, rShadowHit.mat.emission) > 0.0 {
+                        let rNDotL = max(0.0, dot(reflectHit.normal, rLightDir));
+                        color += hit.mat.color * reflectHit.mat.color * (rNDotL * 1.5 + 0.1);
+                    } else {
+                        color += hit.mat.color * reflectHit.mat.color * 0.1;
+                    }
+                }
+            }
+        }
+        
+        // Add direct specular
+        if dot(shadowHit.mat.emission, shadowHit.mat.emission) > 0.0 {
             let viewDir = normalize(-ray.direction);
             let halfVector = normalize(lightDir + viewDir);
             let nDotH = max(0.0, dot(hit.normal, halfVector));
             let spec = pow(nDotH, 1.0 / max(0.01, hit.mat.roughness));
-            color = hit.mat.color * spec * 2.0; 
-        } else {
-            // Diffuse
-            color = hit.mat.color * nDotL * 1.5; 
+            color += hit.mat.color * spec * 2.0;
+        }
+        
+    } else {
+        // Diffuse
+        if dot(shadowHit.mat.emission, shadowHit.mat.emission) > 0.0 {
+            let nDotL = max(0.0, dot(hit.normal, lightDir));
+            color += hit.mat.color * nDotL * 1.5; 
         }
     }
     
@@ -315,7 +354,7 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID: vec3<u32>) {
     
     // Accumulation
     var finalColor = color;
-    if uniforms.renderMode <= 0.5 && uniforms.frameCounter > 0.0 {
+    if uniforms.frameCounter > 0.0 {
         let prevColor = textureLoad(prevAccumulation, vec2<i32>(GlobalInvocationID.xy), 0).rgb;
         finalColor = mix(prevColor, color, 1.0 / (uniforms.frameCounter + 1.0));
     }
