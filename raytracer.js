@@ -332,6 +332,50 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
         }
     }
     
+    // --- Add Direct Shadows/Lighting from Emissive Obstacles ---
+    let numObs = min(10, i32(uniforms.numObstacles));
+    for (var i = 0; i < numObs; i++) {
+        let em = uniforms.obstacleEmissions[i].xyz;
+        if dot(em, em) > 0.0 {
+            let obsCenter = uniforms.obstacleCenters[i].xyz;
+            let obsSize = max(0.1, uniforms.obstacleSizes[i].x);
+            
+            let baseDir = normalize(obsCenter - hitPoint);
+            let obsTarget = obsCenter + random_hemisphere_cosine(baseDir) * obsSize;
+            let obsDir = normalize(obsTarget - hitPoint);
+            
+            let obsShadowRay = Ray(hitPoint + hit.normal * 0.01, obsDir);
+            let obsShadowHit = get_scene_intersection(obsShadowRay);
+            
+            if dot(obsShadowHit.mat.emission, obsShadowHit.mat.emission) > 0.0 {
+                let obsDist = length(obsTarget - hitPoint);
+                let obsAtten = min(1.0, 3.0 / (obsDist * obsDist + 0.1));
+                
+                if hit.mat.metallic > 0.5 {
+                    let h = normalize(obsDir - ray.direction);
+                    let nDotH = max(0.0, dot(hit.normal, h));
+                    let spec = pow(nDotH, 32.0 * (1.0 - hit.mat.roughness));
+                    color += obsShadowHit.mat.emission * spec * hit.mat.metallic * obsAtten;
+                } else {
+                    let nDotL = max(0.0, dot(hit.normal, obsDir));
+                    color += hit.mat.color * obsShadowHit.mat.emission * nDotL * obsAtten;
+                }
+            }
+        }
+    }
+
+    // --- Add GI Bounce for the Grid and Diffuse Ambient ---
+    if hit.mat.metallic <= 0.5 {
+        let giDir = random_hemisphere_cosine(hit.normal);
+        let giRay = Ray(hitPoint + hit.normal * 1e-4, giDir);
+        let giHit = get_scene_intersection(giRay);
+        
+        if giHit.dist < 9999.0 && dot(giHit.mat.emission, giHit.mat.emission) > 0.0 {
+            let giNDotL = max(0.0, dot(hit.normal, giDir));
+            color += hit.mat.color * giHit.mat.emission * giNDotL;
+        }
+    }
+    
     return color;
 }
 
