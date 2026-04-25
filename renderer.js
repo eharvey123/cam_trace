@@ -28,6 +28,7 @@ export class Renderer {
         this.usePathTracing = true;
         this.gameObstacles = [];
         this.tunnelOffset = 0.0;
+        this.playerLightReach = 10.0;
     }
 
     async initialize() {
@@ -93,6 +94,10 @@ export class Renderer {
     
     setTunnelOffset(offset) {
         this.tunnelOffset = offset;
+    }
+    
+    setPlayerLightReach(reach) {
+        this.playerLightReach = reach;
     }
 
     setupTextures() {
@@ -186,10 +191,12 @@ export class Renderer {
         // 12-14: cameraDir, 15: renderMode
         // 16: tunnelOffset, 17: numObstacles, 18-19: padding
         // 20-59: obstacleCenters (10x vec4)
-        // 60-99: obstacleSizesAndColors (10x vec4)
-        this.uniformData = new Float32Array(100);
+        // 60-99: obstacleSizes (10x vec4)
+        // 100-139: obstacleColors (10x vec4)
+        // 140-179: obstacleEmissions (10x vec4)
+        this.uniformData = new Float32Array(180);
         this.uniformBuffer = this.device.createBuffer({
-            size: 400, // 100 * 4 bytes
+            size: 720, // 180 * 4 bytes
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -250,9 +257,10 @@ export class Renderer {
         this.uniformData[14] = 1.0;
         this.uniformData[15] = this.usePathTracing ? 0.0 : 1.0;
         
-        // 16 = tunnelOffset, 17 = numObstacles
+        // 16 = tunnelOffset, 17 = numObstacles, 18 = playerLightReach
         this.uniformData[16] = this.tunnelOffset;
         this.uniformData[17] = this.gameObstacles ? this.gameObstacles.length : 0;
+        this.uniformData[18] = this.playerLightReach;
         
         if (this.gameObstacles) {
             for (let i = 0; i < 10; i++) {
@@ -261,15 +269,27 @@ export class Renderer {
                     this.uniformData[20 + i*4 + 0] = obs.x;
                     this.uniformData[20 + i*4 + 1] = obs.y;
                     this.uniformData[20 + i*4 + 2] = obs.z;
-                    this.uniformData[20 + i*4 + 3] = 0;
+                    this.uniformData[20 + i*4 + 3] = obs.shapeId;
                     
                     this.uniformData[60 + i*4 + 0] = obs.w;
                     this.uniformData[60 + i*4 + 1] = obs.h;
                     this.uniformData[60 + i*4 + 2] = obs.d;
-                    this.uniformData[60 + i*4 + 3] = obs.colorId;
+                    this.uniformData[60 + i*4 + 3] = obs.metallic;
+                    
+                    this.uniformData[100 + i*4 + 0] = obs.r;
+                    this.uniformData[100 + i*4 + 1] = obs.g;
+                    this.uniformData[100 + i*4 + 2] = obs.b;
+                    this.uniformData[100 + i*4 + 3] = obs.roughness;
+                    
+                    this.uniformData[140 + i*4 + 0] = obs.er;
+                    this.uniformData[140 + i*4 + 1] = obs.eg;
+                    this.uniformData[140 + i*4 + 2] = obs.eb;
+                    this.uniformData[140 + i*4 + 3] = 0;
                 } else {
                     this.uniformData[20 + i*4 + 0] = 0;
                     this.uniformData[60 + i*4 + 0] = 0;
+                    this.uniformData[100 + i*4 + 0] = 0;
+                    this.uniformData[140 + i*4 + 0] = 0;
                 }
             }
         }

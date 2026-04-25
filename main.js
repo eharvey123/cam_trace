@@ -109,18 +109,46 @@ async function main() {
     });
 
     function spawnObstacle() {
-        const difficulty = Math.min(1.0, gameState.score / 2000.0); 
+        const difficulty = Math.min(1.0, gameState.score / 2000.0);
         const isDynamic = Math.random() < difficulty;
         const x = (Math.random() - 0.5) * 1.5;
-        
+
+        const shapeId = Math.random() > 0.5 ? 1 : 0; // 0=box, 1=sphere
+        const isMetallic = Math.random() > 0.5;
+        const metallic = isMetallic ? 1.0 : 0.0;
+        const roughness = isMetallic ? (Math.random() > 0.5 ? 0.0 : 0.2) : 1.0;
+
+        const colorTypes = [
+            [0.8, 0.1, 0.1], // Red
+            [0.1, 0.8, 0.1], // Green
+            [0.1, 0.5, 0.9], // Blue
+            [0.9, 0.8, 0.1], // Yellow
+            [0.8, 0.8, 0.8]  // White
+        ];
+        const color = colorTypes[Math.floor(Math.random() * colorTypes.length)];
+
+        // 20% chance to be highly emissive
+        const isEmissive = Math.random() > 0.8;
+        // Increase intensity based on score for more dramatic lighting further down the tunnel
+        const intensity = 5.0 + (gameState.score / 500.0) * 10.0;
+        const emission = isEmissive ? [color[0] * intensity, color[1] * intensity, color[2] * intensity] : [0.0, 0.0, 0.0];
+
         gameState.obstacles.push({
             x: x,
             y: (Math.random() - 0.5) * 1.5,
             z: 10.0,
-            w: 0.2 + Math.random() * 0.2,
-            h: 0.2 + Math.random() * 0.2,
+            w: 0.15 + Math.random() * 0.15, // size or radius
+            h: 0.15 + Math.random() * 0.15,
             d: 0.1,
-            colorId: Math.floor(Math.random() * 3),
+            shapeId: shapeId,
+            metallic: metallic,
+            roughness: roughness,
+            r: color[0],
+            g: color[1],
+            b: color[2],
+            er: emission[0],
+            eg: emission[1],
+            eb: emission[2],
             dynamic: isDynamic,
             startX: x,
             timeOffset: Math.random() * Math.PI * 2
@@ -138,10 +166,10 @@ async function main() {
 
         gameState.score += dt * 10 * (gameState.speed / 5.0);
         scoreValue.innerText = Math.floor(gameState.score).toString();
-        
-        gameState.speed += dt * 0.05; 
+
+        gameState.speed += dt * 0.05;
         gameState.tunnelOffset -= gameState.speed * dt;
-        
+
         gameState.spawnTimer -= dt;
         const spawnRate = Math.max(0.3, 1.0 - (gameState.score / 2000.0));
         if (gameState.spawnTimer <= 0 && gameState.obstacles.length < 10) {
@@ -152,7 +180,7 @@ async function main() {
         for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
             let obs = gameState.obstacles[i];
             obs.z -= gameState.speed * dt;
-            
+
             if (obs.dynamic) {
                 obs.x = obs.startX + Math.sin(now / 500.0 + obs.timeOffset) * 0.5;
             }
@@ -168,21 +196,35 @@ async function main() {
             const lightRad = 0.15;
             const lp = renderer.lightPos;
             for (let obs of gameState.obstacles) {
-                const dx = Math.max(obs.x - obs.w, Math.min(lp.x, obs.x + obs.w)) - lp.x;
-                const dy = Math.max(obs.y - obs.h, Math.min(lp.y, obs.y + obs.h)) - lp.y;
-                const dz = Math.max(obs.z - obs.d, Math.min(lp.z, obs.z + obs.d)) - lp.z;
-                
-                const distSq = dx*dx + dy*dy + dz*dz;
-                if (distSq < lightRad * lightRad) {
+                let hit = false;
+
+                if (obs.shapeId === 1) {
+                    // Sphere collision
+                    const dx = lp.x - obs.x;
+                    const dy = lp.y - obs.y;
+                    const dz = lp.z - obs.z;
+                    const distSq = dx * dx + dy * dy + dz * dz;
+                    const totalRad = obs.w + lightRad;
+                    if (distSq < totalRad * totalRad) hit = true;
+                } else {
+                    // Box collision
+                    const dx = Math.max(obs.x - obs.w, Math.min(lp.x, obs.x + obs.w)) - lp.x;
+                    const dy = Math.max(obs.y - obs.h, Math.min(lp.y, obs.y + obs.h)) - lp.y;
+                    const dz = Math.max(obs.z - obs.d, Math.min(lp.z, obs.z + obs.d)) - lp.z;
+                    const distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq < lightRad * lightRad) hit = true;
+                }
+
+                if (hit) {
                     gameState.health -= 25;
                     gameState.iFrames = 1.0;
-                    
+
                     healthBar.style.width = Math.max(0, gameState.health) + '%';
-                    
+
                     document.body.classList.remove('damage-flash');
                     void document.body.offsetWidth;
                     document.body.classList.add('damage-flash');
-                    
+
                     if (gameState.health <= 0) {
                         gameState.isPlaying = false;
                         gameOverScreen.style.display = 'flex';
@@ -195,6 +237,10 @@ async function main() {
 
         renderer.setObstacles(gameState.obstacles);
         renderer.setTunnelOffset(gameState.tunnelOffset);
+        
+        // Player light reach falls off as score increases
+        const reach = Math.max(0.5, 10.0 - (gameState.score / 2000.0) * 9.5);
+        renderer.setPlayerLightReach(reach);
     }
 
     function renderLoop() {

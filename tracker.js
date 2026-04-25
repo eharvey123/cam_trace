@@ -98,11 +98,16 @@ export class Tracker {
                     
                     // Map to 3D space from center base
                     // X follows head movement (camera is mirrored)
-                    const targetX = this.baseCenter.x + deltaX * 5.0; 
-                    const targetY = this.baseCenter.y - deltaY * 5.0; 
+                    let targetX = this.baseCenter.x + deltaX * 5.0; 
+                    let targetY = this.baseCenter.y - deltaY * 5.0; 
                     
                     // Closer to camera -> larger eyeDist (positive delta) -> closer light (larger Z)
                     const targetZ = this.baseCenter.z + deltaDist * 20.0;
+                    
+                    // Clamp targets to stay inside the tunnel (-2 to 2 on X, -1 to 3 on Y)
+                    // We use slightly smaller bounds to account for the light's radius
+                    targetX = Math.max(-1.8, Math.min(1.8, targetX));
+                    targetY = Math.max(-0.8, Math.min(2.8, targetY));
                     
                     // Smooth the movement
                     this.lightPos.x += (targetX - this.lightPos.x) * 0.2;

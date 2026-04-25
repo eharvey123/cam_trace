@@ -8,10 +8,12 @@ struct Uniforms {
     renderMode: f32,
     tunnelOffset: f32,
     numObstacles: f32,
-    padding1: f32,
+    playerLightReach: f32,
     padding2: f32,
     obstacleCenters: array<vec4<f32>, 10>,
-    obstacleSizesAndColors: array<vec4<f32>, 10>,
+    obstacleSizes: array<vec4<f32>, 10>,
+    obstacleColors: array<vec4<f32>, 10>,
+    obstacleEmissions: array<vec4<f32>, 10>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -137,7 +139,7 @@ fn get_scene_intersection(ray: Ray) -> Hit {
     }
     
     // Ceiling
-    let tCeil = intersect_plane(ray, vec3<f32>(0.0, -1.0, 0.0), 1.0);
+    let tCeil = intersect_plane(ray, vec3<f32>(0.0, -1.0, 0.0), 3.0);
     if tCeil > 0.0 && tCeil < hit.dist { 
         let hp = ray.origin + ray.direction * tCeil;
         let grid = max(abs(fract(hp.x) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
@@ -166,25 +168,31 @@ fn get_scene_intersection(ray: Ray) -> Hit {
     // Obstacles
     let numObs = min(10, i32(uniforms.numObstacles));
     for (var i = 0; i < numObs; i++) {
-        var boxNorm = vec3<f32>(0.0);
+        var objNorm = vec3<f32>(0.0);
         let center = uniforms.obstacleCenters[i].xyz;
-        let size = uniforms.obstacleSizesAndColors[i].xyz;
-        let colorId = uniforms.obstacleSizesAndColors[i].w;
+        let shapeId = uniforms.obstacleCenters[i].w;
+        let size = uniforms.obstacleSizes[i].xyz;
+        let metallic = uniforms.obstacleSizes[i].w;
+        let color = uniforms.obstacleColors[i].xyz;
+        let roughness = uniforms.obstacleColors[i].w;
+        let emission = uniforms.obstacleEmissions[i].xyz;
         
-        let boxMin = center - size;
-        let boxMax = center + size;
+        var tObj = -1.0;
+        if shapeId > 0.5 {
+            // Sphere
+            tObj = intersect_sphere(ray, center, size.x);
+            if tObj > 0.0 {
+                objNorm = normalize((ray.origin + ray.direction * tObj) - center);
+            }
+        } else {
+            // Box
+            let boxMin = center - size;
+            let boxMax = center + size;
+            tObj = intersect_box(ray, boxMin, boxMax, &objNorm);
+        }
         
-        let tBox = intersect_box(ray, boxMin, boxMax, &boxNorm);
-        if tBox > 0.0 && tBox < hit.dist {
-            var boxCol = matWhite.color;
-            var boxMetal = 0.0;
-            var boxRough = 1.0;
-            
-            if colorId < 0.5 { boxCol = matRed.color; }
-            else if colorId < 1.5 { boxCol = matGreen.color; }
-            else if colorId < 2.5 { boxCol = matMetal.color; boxMetal = matMetal.metallic; boxRough = matMetal.roughness; }
-            
-            hit = Hit(tBox, boxNorm, Material(boxCol, vec3<f32>(0.0), boxRough, boxMetal));
+        if tObj > 0.0 && tObj < hit.dist {
+            hit = Hit(tObj, objNorm, Material(color, emission, roughness, metallic));
         }
     }
     
@@ -218,6 +226,10 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
     let shadowRay = Ray(hitPoint + hit.normal * 1e-4, lightDir);
     let shadowHit = get_scene_intersection(shadowRay);
     
+    // Attenuation factor to control how far light reaches before diminishing
+    let lightDist = length(lightTarget - hitPoint);
+    let attenuation = min(1.0, uniforms.playerLightReach / (lightDist * lightDist + 0.01));
+    
     var color = vec3<f32>(0.0);
     
     if hit.mat.metallic > 0.5 {
@@ -245,9 +257,7 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
                     
                     if dot(rShadowHit.mat.emission, rShadowHit.mat.emission) > 0.0 {
                         let rNDotL = max(0.0, dot(reflectHit.normal, rLightDir));
-                        color += hit.mat.color * reflectHit.mat.color * (rNDotL * 1.5 + 0.1);
-                    } else {
-                        color += hit.mat.color * reflectHit.mat.color * 0.1;
+                        color += hit.mat.color * reflectHit.mat.color * (rNDotL * 1.5);
                     }
                 }
             }
@@ -255,23 +265,19 @@ fn ray_trace(ray: Ray) -> vec3<f32> {
         
         // Add direct specular
         if dot(shadowHit.mat.emission, shadowHit.mat.emission) > 0.0 {
-            let viewDir = normalize(-ray.direction);
-            let halfVector = normalize(lightDir + viewDir);
-            let nDotH = max(0.0, dot(hit.normal, halfVector));
-            let spec = pow(nDotH, 1.0 / max(0.01, hit.mat.roughness));
-            color += hit.mat.color * spec * 2.0;
+            let h = normalize(lightDir - ray.direction);
+            let nDotH = max(0.0, dot(hit.normal, h));
+            let spec = pow(nDotH, 32.0 * (1.0 - hit.mat.roughness));
+            color += shadowHit.mat.emission * spec * hit.mat.metallic * attenuation;
         }
         
     } else {
         // Diffuse
         if dot(shadowHit.mat.emission, shadowHit.mat.emission) > 0.0 {
             let nDotL = max(0.0, dot(hit.normal, lightDir));
-            color += hit.mat.color * nDotL * 1.5; 
+            color += hit.mat.color * nDotL * 1.5 * attenuation; 
         }
     }
-    
-    // Ambient light
-    color += hit.mat.color * 0.1;
     
     return color;
 }
