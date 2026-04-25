@@ -8,7 +8,6 @@ async function main() {
     const metricX = document.getElementById('metric-x');
     const metricY = document.getElementById('metric-y');
     const metricZ = document.getElementById('metric-z');
-    const modeBtn = document.getElementById('mode-btn');
 
 
     // Initialize WebGPU Renderer
@@ -56,18 +55,6 @@ async function main() {
             statusText.innerText = "Camera access denied or failed.";
             startBtn.disabled = false;
         }
-    });
-
-    modeBtn.addEventListener('click', () => {
-        renderer.usePathTracing = !renderer.usePathTracing;
-        if (renderer.usePathTracing) {
-            modeBtn.innerText = "Switch to Ray Tracing";
-            modeBtn.style.backgroundColor = "#8b5cf6"; // Purple
-        } else {
-            modeBtn.innerText = "Switch to Path Tracing";
-            modeBtn.style.backgroundColor = "#f59e0b"; // Orange
-        }
-        renderer.resetAccumulation();
     });
 
     // Start render loop

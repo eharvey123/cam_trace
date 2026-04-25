@@ -255,7 +255,7 @@ export class Renderer {
         this.uniformData[12] = 0.0;
         this.uniformData[13] = 0.0;
         this.uniformData[14] = 1.0;
-        this.uniformData[15] = this.usePathTracing ? 0.0 : 1.0;
+        this.uniformData[15] = 1.0;
         
         // 16 = tunnelOffset, 17 = numObstacles, 18 = playerLightReach
         this.uniformData[16] = this.tunnelOffset;
