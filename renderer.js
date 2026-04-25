@@ -26,6 +26,8 @@ export class Renderer {
         this.lastLightPos = { ...this.lightPos };
         
         this.usePathTracing = true;
+        this.gameObstacles = [];
+        this.tunnelOffset = 0.0;
     }
 
     async initialize() {
@@ -83,6 +85,14 @@ export class Renderer {
         }
         
         this.lightPos = { ...pos };
+    }
+    
+    setObstacles(obstacles) {
+        this.gameObstacles = obstacles;
+    }
+    
+    setTunnelOffset(offset) {
+        this.tunnelOffset = offset;
     }
 
     setupTextures() {
@@ -173,9 +183,13 @@ export class Renderer {
         // 0-2: lightPos, 3: frameCounter
         // 4-5: resolution, 6-7: padding
         // 8-10: cameraPos, 11: padding
-        // 12-14: cameraDir, 15: padding
+        // 12-14: cameraDir, 15: renderMode
+        // 16: tunnelOffset, 17: numObstacles, 18-19: padding
+        // 20-59: obstacleCenters (10x vec4)
+        // 60-99: obstacleSizesAndColors (10x vec4)
+        this.uniformData = new Float32Array(100);
         this.uniformBuffer = this.device.createBuffer({
-            size: 64, // 16 * 4
+            size: 400, // 100 * 4 bytes
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -235,6 +249,30 @@ export class Renderer {
         this.uniformData[13] = 0.0;
         this.uniformData[14] = 1.0;
         this.uniformData[15] = this.usePathTracing ? 0.0 : 1.0;
+        
+        // 16 = tunnelOffset, 17 = numObstacles
+        this.uniformData[16] = this.tunnelOffset;
+        this.uniformData[17] = this.gameObstacles ? this.gameObstacles.length : 0;
+        
+        if (this.gameObstacles) {
+            for (let i = 0; i < 10; i++) {
+                if (i < this.gameObstacles.length) {
+                    const obs = this.gameObstacles[i];
+                    this.uniformData[20 + i*4 + 0] = obs.x;
+                    this.uniformData[20 + i*4 + 1] = obs.y;
+                    this.uniformData[20 + i*4 + 2] = obs.z;
+                    this.uniformData[20 + i*4 + 3] = 0;
+                    
+                    this.uniformData[60 + i*4 + 0] = obs.w;
+                    this.uniformData[60 + i*4 + 1] = obs.h;
+                    this.uniformData[60 + i*4 + 2] = obs.d;
+                    this.uniformData[60 + i*4 + 3] = obs.colorId;
+                } else {
+                    this.uniformData[20 + i*4 + 0] = 0;
+                    this.uniformData[60 + i*4 + 0] = 0;
+                }
+            }
+        }
         
         this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 

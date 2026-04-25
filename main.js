@@ -71,7 +71,134 @@ async function main() {
     });
 
     // Start render loop
+    let gameState = {
+        isPlaying: true,
+        health: 100,
+        score: 0,
+        speed: 5.0,
+        tunnelOffset: 0,
+        lastTime: performance.now(),
+        obstacles: [],
+        spawnTimer: 0,
+        iFrames: 0
+    };
+
+    const scoreValue = document.getElementById('score-value');
+    const healthBar = document.getElementById('health-bar');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const finalScore = document.getElementById('final-score');
+
+    function resetGame() {
+        gameState.isPlaying = true;
+        gameState.health = 100;
+        gameState.score = 0;
+        gameState.speed = 5.0;
+        gameState.obstacles = [];
+        gameState.iFrames = 0;
+        gameState.lastTime = performance.now();
+        healthBar.style.width = '100%';
+        scoreValue.innerText = '0';
+        gameOverScreen.style.display = 'none';
+        renderer.resetAccumulation();
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !gameState.isPlaying) {
+            resetGame();
+        }
+    });
+
+    function spawnObstacle() {
+        const difficulty = Math.min(1.0, gameState.score / 2000.0); 
+        const isDynamic = Math.random() < difficulty;
+        const x = (Math.random() - 0.5) * 1.5;
+        
+        gameState.obstacles.push({
+            x: x,
+            y: (Math.random() - 0.5) * 1.5,
+            z: 10.0,
+            w: 0.2 + Math.random() * 0.2,
+            h: 0.2 + Math.random() * 0.2,
+            d: 0.1,
+            colorId: Math.floor(Math.random() * 3),
+            dynamic: isDynamic,
+            startX: x,
+            timeOffset: Math.random() * Math.PI * 2
+        });
+    }
+
+    function updateGame() {
+        const now = performance.now();
+        const dt = (now - gameState.lastTime) / 1000.0;
+        gameState.lastTime = now;
+
+        if (!gameState.isPlaying || dt > 0.1) return;
+
+        renderer.resetAccumulation(); // Prevent smearing while moving
+
+        gameState.score += dt * 10 * (gameState.speed / 5.0);
+        scoreValue.innerText = Math.floor(gameState.score).toString();
+        
+        gameState.speed += dt * 0.05; 
+        gameState.tunnelOffset -= gameState.speed * dt;
+        
+        gameState.spawnTimer -= dt;
+        const spawnRate = Math.max(0.3, 1.0 - (gameState.score / 2000.0));
+        if (gameState.spawnTimer <= 0 && gameState.obstacles.length < 10) {
+            spawnObstacle();
+            gameState.spawnTimer = spawnRate;
+        }
+
+        for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+            let obs = gameState.obstacles[i];
+            obs.z -= gameState.speed * dt;
+            
+            if (obs.dynamic) {
+                obs.x = obs.startX + Math.sin(now / 500.0 + obs.timeOffset) * 0.5;
+            }
+
+            if (obs.z < -2.0) {
+                gameState.obstacles.splice(i, 1);
+            }
+        }
+
+        if (gameState.iFrames > 0) {
+            gameState.iFrames -= dt;
+        } else {
+            const lightRad = 0.15;
+            const lp = renderer.lightPos;
+            for (let obs of gameState.obstacles) {
+                const dx = Math.max(obs.x - obs.w, Math.min(lp.x, obs.x + obs.w)) - lp.x;
+                const dy = Math.max(obs.y - obs.h, Math.min(lp.y, obs.y + obs.h)) - lp.y;
+                const dz = Math.max(obs.z - obs.d, Math.min(lp.z, obs.z + obs.d)) - lp.z;
+                
+                const distSq = dx*dx + dy*dy + dz*dz;
+                if (distSq < lightRad * lightRad) {
+                    gameState.health -= 25;
+                    gameState.iFrames = 1.0;
+                    
+                    healthBar.style.width = Math.max(0, gameState.health) + '%';
+                    
+                    document.body.classList.remove('damage-flash');
+                    void document.body.offsetWidth;
+                    document.body.classList.add('damage-flash');
+                    
+                    if (gameState.health <= 0) {
+                        gameState.isPlaying = false;
+                        gameOverScreen.style.display = 'flex';
+                        finalScore.innerText = Math.floor(gameState.score).toString();
+                    }
+                    break;
+                }
+            }
+        }
+
+        renderer.setObstacles(gameState.obstacles);
+        renderer.setTunnelOffset(gameState.tunnelOffset);
+    }
+
     function renderLoop() {
+        updateGame();
         renderer.render();
         requestAnimationFrame(renderLoop);
     }

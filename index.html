@@ -13,6 +13,21 @@
     <!-- WebGPU Canvas -->
     <canvas id="webgpu-canvas"></canvas>
 
+    <!-- Game UI Overlay -->
+    <div id="game-ui-container">
+        <div id="score-display">Score: <span id="score-value">0</span></div>
+        <div id="health-bar-container">
+            <div id="health-bar"></div>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" style="display: none;">
+        <h2>GAME OVER</h2>
+        <p>Final Score: <span id="final-score">0</span></p>
+        <p class="blink">Press ENTER to Restart</p>
+    </div>
+
     <!-- UI Overlay -->
     <div id="ui-container">
         <h1>CameraRay</h1>

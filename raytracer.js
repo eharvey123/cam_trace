@@ -6,6 +6,12 @@ struct Uniforms {
     cameraPos: vec3<f32>,
     cameraDir: vec3<f32>,
     renderMode: f32,
+    tunnelOffset: f32,
+    numObstacles: f32,
+    padding1: f32,
+    padding2: f32,
+    obstacleCenters: array<vec4<f32>, 10>,
+    obstacleSizesAndColors: array<vec4<f32>, 10>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -122,52 +128,64 @@ fn get_scene_intersection(ray: Ray) -> Hit {
     let matLight = Material(vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(5.0, 5.0, 5.0), 1.0, 0.0);
 
     // Floor
-    let tFloor = intersect_plane(ray, vec3<f32>(0.0, 1.0, 0.0), 0.0);
-    if tFloor > 0.0 && tFloor < hit.dist { hit = Hit(tFloor, vec3<f32>(0.0, 1.0, 0.0), matWhite); }
-    
-    // Ceiling
-    let tCeil = intersect_plane(ray, vec3<f32>(0.0, -1.0, 0.0), 2.0);
-    if tCeil > 0.0 && tCeil < hit.dist { hit = Hit(tCeil, vec3<f32>(0.0, -1.0, 0.0), matWhite); }
-    
-    // Back wall
-    let tBack = intersect_plane(ray, vec3<f32>(0.0, 0.0, -1.0), 1.0);
-    if tBack > 0.0 && tBack < hit.dist { hit = Hit(tBack, vec3<f32>(0.0, 0.0, -1.0), matWhite); }
-    
-    // Left wall (Red)
-    let tLeft = intersect_plane(ray, vec3<f32>(1.0, 0.0, 0.0), 1.0);
-    if tLeft > 0.0 && tLeft < hit.dist { hit = Hit(tLeft, vec3<f32>(1.0, 0.0, 0.0), matRed); }
-    
-    // Right wall (Green)
-    let tRight = intersect_plane(ray, vec3<f32>(-1.0, 0.0, 0.0), 1.0);
-    if tRight > 0.0 && tRight < hit.dist { hit = Hit(tRight, vec3<f32>(-1.0, 0.0, 0.0), matGreen); }
-    
-    // Tall box
-    var boxNorm = vec3<f32>(0.0);
-    // Apply some rotation manually by rotating ray inverse
-    let rotY = 0.3;
-    let s = sin(rotY); let c = cos(rotY);
-    var rBox = ray;
-    rBox.origin.x = ray.origin.x * c - ray.origin.z * s;
-    rBox.origin.z = ray.origin.x * s + ray.origin.z * c;
-    rBox.direction.x = ray.direction.x * c - ray.direction.z * s;
-    rBox.direction.z = ray.direction.x * s + ray.direction.z * c;
-    // Shift origin back to box center
-    rBox.origin -= vec3<f32>(-0.3, 0.0, 0.3);
-    
-    let tTall = intersect_box(rBox, vec3<f32>(-0.3, 0.0, -0.3), vec3<f32>(0.3, 1.2, 0.3), &boxNorm);
-    if tTall > 0.0 && tTall < hit.dist { 
-        // rotate normal back
-        var worldNorm = boxNorm;
-        worldNorm.x = boxNorm.x * c + boxNorm.z * s;
-        worldNorm.z = -boxNorm.x * s + boxNorm.z * c;
-        hit = Hit(tTall, normalize(worldNorm), matWhite); 
+    let tFloor = intersect_plane(ray, vec3<f32>(0.0, 1.0, 0.0), 1.0);
+    if tFloor > 0.0 && tFloor < hit.dist { 
+        let hp = ray.origin + ray.direction * tFloor;
+        let grid = max(abs(fract(hp.x) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
+        let col = mix(vec3<f32>(0.1, 0.1, 0.15), vec3<f32>(0.2, 0.6, 1.0), step(0.48, grid));
+        hit = Hit(tFloor, vec3<f32>(0.0, 1.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
     }
     
-    // Sphere
-    let tSphere = intersect_sphere(ray, vec3<f32>(0.4, 0.3, -0.3), 0.3);
-    if tSphere > 0.0 && tSphere < hit.dist {
-        let norm = normalize((ray.origin + ray.direction * tSphere) - vec3<f32>(0.4, 0.3, -0.3));
-        hit = Hit(tSphere, norm, matMetal);
+    // Ceiling
+    let tCeil = intersect_plane(ray, vec3<f32>(0.0, -1.0, 0.0), 1.0);
+    if tCeil > 0.0 && tCeil < hit.dist { 
+        let hp = ray.origin + ray.direction * tCeil;
+        let grid = max(abs(fract(hp.x) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
+        let col = mix(vec3<f32>(0.1, 0.1, 0.15), vec3<f32>(0.2, 0.6, 1.0), step(0.48, grid));
+        hit = Hit(tCeil, vec3<f32>(0.0, -1.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
+    }
+    
+    // Left wall
+    let tLeft = intersect_plane(ray, vec3<f32>(1.0, 0.0, 0.0), 2.0);
+    if tLeft > 0.0 && tLeft < hit.dist { 
+        let hp = ray.origin + ray.direction * tLeft;
+        let grid = max(abs(fract(hp.y) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
+        let col = mix(vec3<f32>(0.15, 0.1, 0.1), vec3<f32>(1.0, 0.2, 0.2), step(0.48, grid));
+        hit = Hit(tLeft, vec3<f32>(1.0, 0.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
+    }
+    
+    // Right wall
+    let tRight = intersect_plane(ray, vec3<f32>(-1.0, 0.0, 0.0), 2.0);
+    if tRight > 0.0 && tRight < hit.dist { 
+        let hp = ray.origin + ray.direction * tRight;
+        let grid = max(abs(fract(hp.y) - 0.5), abs(fract(hp.z + uniforms.tunnelOffset) - 0.5));
+        let col = mix(vec3<f32>(0.1, 0.15, 0.1), vec3<f32>(0.2, 1.0, 0.2), step(0.48, grid));
+        hit = Hit(tRight, vec3<f32>(-1.0, 0.0, 0.0), Material(col, vec3<f32>(0.0), 0.5, 0.0));
+    }
+    
+    // Obstacles
+    let numObs = min(10, i32(uniforms.numObstacles));
+    for (var i = 0; i < numObs; i++) {
+        var boxNorm = vec3<f32>(0.0);
+        let center = uniforms.obstacleCenters[i].xyz;
+        let size = uniforms.obstacleSizesAndColors[i].xyz;
+        let colorId = uniforms.obstacleSizesAndColors[i].w;
+        
+        let boxMin = center - size;
+        let boxMax = center + size;
+        
+        let tBox = intersect_box(ray, boxMin, boxMax, &boxNorm);
+        if tBox > 0.0 && tBox < hit.dist {
+            var boxCol = matWhite.color;
+            var boxMetal = 0.0;
+            var boxRough = 1.0;
+            
+            if colorId < 0.5 { boxCol = matRed.color; }
+            else if colorId < 1.5 { boxCol = matGreen.color; }
+            else if colorId < 2.5 { boxCol = matMetal.color; boxMetal = matMetal.metallic; boxRough = matMetal.roughness; }
+            
+            hit = Hit(tBox, boxNorm, Material(boxCol, vec3<f32>(0.0), boxRough, boxMetal));
+        }
     }
     
     // Dynamic Eye Light Sphere
