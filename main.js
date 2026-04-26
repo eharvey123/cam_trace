@@ -65,13 +65,15 @@ async function main() {
         obstacles: [],
         spawnTimer: 0,
         iFrames: 0,
-        particles: []
+        particles: [],
+        cat: { active: false, spawnTimer: 10.0, x: 0, y: 0, z: 0, renderX: 0, renderY: 0 }
     };
 
     const scoreValue = document.getElementById('score-value');
     const healthBar = document.getElementById('health-bar');
     const gameOverScreen = document.getElementById('game-over-screen');
     const finalScore = document.getElementById('final-score');
+    const catSprite = document.getElementById('cat-sprite');
 
     function resetGame() {
         gameState.isPlaying = true;
@@ -81,9 +83,11 @@ async function main() {
         gameState.obstacles = [];
         gameState.iFrames = 0;
         gameState.lastTime = performance.now();
+        gameState.cat = { active: false, spawnTimer: 10.0, x: 0, y: 0, z: 0, renderX: 0, renderY: 0 };
         healthBar.style.width = '100%';
         scoreValue.innerText = '0';
         gameOverScreen.style.display = 'none';
+        catSprite.style.display = 'none';
         renderer.resetAccumulation();
     }
 
@@ -338,6 +342,100 @@ async function main() {
         // Player light reach falls off as score increases
         const reach = Math.max(0.5, 10.0 - (gameState.score / 2000.0) * 9.5);
         renderer.setPlayerLightReach(reach);
+
+        // --- Cat Logic ---
+        if (!gameState.cat.active) {
+            gameState.cat.spawnTimer -= dt;
+            if (gameState.cat.spawnTimer <= 0) {
+                gameState.cat.active = true;
+                gameState.cat.x = (Math.random() - 0.5) * 2.0;
+                gameState.cat.y = (Math.random() - 0.5) * 2.0;
+                gameState.cat.z = 15.0; // spawn further away
+                catSprite.style.display = 'block';
+            }
+        } else {
+            gameState.cat.z -= gameState.speed * dt;
+            const curve = getCurveOffset(gameState.cat.z, gameState.tunnelOffset);
+            gameState.cat.renderX = gameState.cat.x + curve.x;
+            gameState.cat.renderY = gameState.cat.y + curve.y;
+            
+            // Cat bobs a bit
+            gameState.cat.renderX += Math.sin(now / 300.0) * 0.5;
+            gameState.cat.renderY += Math.cos(now / 400.0) * 0.3;
+
+            // Project 3D to 2D
+            const cx = 0, cy = 1.0, cz = -3.0;
+            const vx = gameState.cat.renderX - cx;
+            const vy = gameState.cat.renderY - cy;
+            const vz = gameState.cat.z - cz;
+            
+            const zDist = vx * forward.x + vy * forward.y + vz * forward.z;
+            
+            if (zDist > 0 && gameState.cat.z > -2.0) {
+                const px = vx * right.x + vy * right.y + vz * right.z;
+                const py = vx * up.x + vy * up.y + vz * up.z;
+                
+                const aspect = window.innerWidth / window.innerHeight;
+                const fov = 1.0;
+                
+                const ndcX = (px / zDist) / (aspect * fov);
+                const ndcY = -(py / zDist) / fov;
+                
+                const screenX = (ndcX + 1.0) * 0.5 * window.innerWidth;
+                const screenY = (-ndcY + 1.0) * 0.5 * window.innerHeight;
+                
+                catSprite.style.left = screenX + 'px';
+                catSprite.style.top = screenY + 'px';
+                
+                // Scale based on distance
+                const scale = Math.max(0.01, 5.0 / zDist);
+                catSprite.style.transform = `translate(-50%, -50%) scale(${scale})`;
+                
+                // Collision with lightPos
+                const dx = lp.x - gameState.cat.renderX;
+                const dy = lp.y - gameState.cat.renderY;
+                const dz = lp.z - gameState.cat.z;
+                const distSq = dx*dx + dy*dy + dz*dz;
+                
+                if (distSq < 0.8) { // Hit radius
+                    gameState.cat.active = false;
+                    gameState.cat.spawnTimer = 10.0 + Math.random() * 5.0; // Respawn 10-15s
+                    catSprite.style.display = 'none';
+                    
+                    // Heal
+                    gameState.health = Math.min(100, gameState.health + 50);
+                    healthBar.style.width = gameState.health + '%';
+                    
+                    // Flash effect (green for heal)
+                    const oldBg = document.body.style.backgroundColor;
+                    const oldTransition = document.body.style.transition;
+                    document.body.style.transition = 'none';
+                    document.body.style.backgroundColor = 'rgba(16, 185, 129, 0.4)';
+                    setTimeout(() => { 
+                        document.body.style.transition = 'background-color 0.5s';
+                        document.body.style.backgroundColor = oldBg || 'transparent'; 
+                    }, 50);
+                    
+                    // Score bonus
+                    gameState.score += 500;
+                    
+                    // Spawn particles (green/white)
+                    spawnExplosion({
+                        renderX: gameState.cat.renderX,
+                        renderY: gameState.cat.renderY,
+                        z: gameState.cat.z,
+                        w: 0.2, h: 0.2,
+                        er: 0.1, eg: 1.0, eb: 0.5,
+                        r: 0.1, g: 1.0, b: 0.5
+                    });
+                }
+            } else if (gameState.cat.z <= -2.0) {
+                // Missed
+                gameState.cat.active = false;
+                gameState.cat.spawnTimer = 5.0 + Math.random() * 5.0;
+                catSprite.style.display = 'none';
+            }
+        }
     }
 
     function renderLoop() {
